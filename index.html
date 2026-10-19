@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Змейка 8-bit</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Crect width='10' height='10' fill='%232fa84f'/%3E%3Crect x='6' y='2' width='2' height='2' fill='%23fff'/%3E%3C/svg%3E">
+<style>
+  html, body { margin: 0; height: 100%; background: #07070d; overflow: hidden; }
+  body { display: flex; align-items: center; justify-content: center; }
+  #tv {
+    position: relative; width: 900px; height: 600px; flex: none;
+    box-sizing: border-box; padding: 30px;
+    background: linear-gradient(145deg, #2a2a35, #121218);
+    border: 4px solid #050508; border-radius: 48px;
+    box-shadow: inset 0 0 0 3px #3a3a48, inset 0 0 40px #000, 0 0 60px rgba(0,0,0,.8);
+    transform-origin: center center;
+  }
+  #screen {
+    position: relative; width: 840px; height: 540px; border-radius: 28px; overflow: hidden;
+    box-shadow: 0 0 0 4px #050508, 0 0 24px rgba(120,255,140,.18);
+  }
+  canvas { display: block; width: 840px; height: 540px; image-rendering: pixelated; background: #0b1a0e; }
+  #screen::before { /* скан-линии */
+    content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 2;
+    background: repeating-linear-gradient(to bottom, rgba(0,0,0,0) 0, rgba(0,0,0,0) 2px, rgba(0,0,0,.22) 3px, rgba(0,0,0,0) 4px);
+  }
+  #screen::after { /* виньетка и блик */
+    content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 3;
+    background:
+      radial-gradient(ellipse at 30% 15%, rgba(255,255,255,.07), transparent 45%),
+      radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,.55) 100%);
+  }
+  #led { position: absolute; right: 44px; bottom: 9px; width: 8px; height: 8px; border-radius: 50%;
+         background: #ff3b3b; box-shadow: 0 0 8px #ff3b3b; }
+  #brand { position: absolute; left: 46px; bottom: 6px; font: bold 12px monospace; letter-spacing: 3px; color: #6b6b7c; }
+</style>
+</head>
+<body>
+<div id="tv">
+  <div id="screen"><canvas id="c" width="840" height="540"></canvas></div>
+  <div id="brand">RETRO-TV</div><div id="led"></div>
+</div>
+<script>
+(() => {
+'use strict';
+const T = 30, COLS = 28, ROWS = 18;       // клетка 30px = спрайт 10x10 * 3
+const FX0 = 1, FX1 = COLS - 2, FY0 = 2, FY1 = ROWS - 2; // границы игровой области (внутри кирпичей)
+
+// ---------- палитра (ограниченная, как у приставки) ----------
+const PAL = {
+  d: '#0e3b1a', g: '#2fa84f', l: '#8bd450', e: '#1e7a37',
+  w: '#f4f4f4', k: '#111118', r: '#ff3b5c',
+  R: '#d12b3f', H: '#ff9aa8', D: '#7d1428',
+  b: '#7a4a21', B: '#a8683a', n: '#3b2210',
+  y: '#f2c230', s: '#4aa05c', t: '#2c7a42', f: '#e8e8ff', p: '#c85adf',
+  m: '#9a9aa8', M: '#6a6a78', o: '#e8742a'
+};
+
+// ---------- спрайты 10x10 ----------
+const SPR = {
+  head: [
+    '..dddddd..',
+    '.dggllggd.',
+    'dgggglwkgd',
+    'dggggggggd',
+    'dggggggggr',
+    'dggggggggr',
+    'dggggggggd',
+    'dgggglwkgd',
+    '.dggllggd.',
+    '..dddddd..'],
+  body: [
+    '.dddddddd.',
+    'dggggggggd',
+    'dgllggllgd',
+    'dgllggllgd',
+    'dggggggggd',
+    'dggggggggd',
+    'dgllggllgd',
+    'dgllggllgd',
+    'dggggggggd',
+    '.dddddddd.'],
+  body2: [
+    '.dddddddd.',
+    'deeeeeeeed',
+    'dellggllgd'.replace(/g/g, 'e'),
+    'dellggllgd'.replace(/g/g, 'e'),
+    'deeeeeeeed',
+    'deeeeeeeed',
+    'dellggllgd'.replace(/g/g, 'e'),
+    'dellggllgd'.replace(/g/g, 'e'),
+    'deeeeeeeed',
+    '.dddddddd.'],
+  apple: [
+    '....nn.l..',
+    '...nnll...',
+    '..DrrrrD..',
+    '.DrHHrrrD.',
+    'DrHrrrrrrD',
+    'DrrrrrrrRD',
+    'DrrrrrrRRD',
+    '.DrrrrRRD.',
+    '..DRRRRD..',
+    '...DDDD...'],
+  gold: [
+    '....nn.l..',
+    '...nnll...',
+    '..oyyyyo..',
+    '.oyfffyyo.',
+    'oyfyyyyyyo',
+    'oyyyyyyyyo',
+    'oyyyyyyyoo',
+    '.oyyyyyoo.',
+    '..oooooo..',
+    '...oooo...'],
+  grassA: [
+    'sssssssssss'.slice(0, 10),
+    'ssssssssss',
+    'sssstsssss'.slice(0, 10),
+    'ssssssssss',
+    'ssssssssss',
+    'ssstssssss',
+    'ssssssssss',
+    'sssssssstt'.slice(0, 10),
+    'ssssssssss',
+    'ssssssssss'],
+  grassB: [
+    'tttttttttt',
+    'tttttttttt',
+    'tttttsttt'.padEnd(10, 't'),
+    'tttttttttt',
+    'tttttttttt',
+    'ttsttttttt',
+    'tttttttttt',
+    'tttttttsst'.slice(0, 10),
+    'tttttttttt',
+    'tttttttttt'],
+  brick: [
+    'mmmmmmmmmM',
+    'mmmmMmmmmM',
+    'MMMMMMMMMM',
+    'mmMmmmmmmM'.replace('M', 'm'),
+    'mmmmmmmmmM',
+    'MMMMMMMMMM',
+    'mmmmmmMmmm',
+    'mmmmmmMmmm',
+    'MMMMMMMMMM',
+    'mmmmmmmmmM'],
+  flower: [
+    '..........',
+    '....f.....',
+    '...fyf....',
+    '....f.....',
+    '....t.....',
+    '....t.....',
+    '..........',
+    '..........',
+    '..........',
+    '..........'],
+  flower2: [
+    '..........',
+    '..........',
+    '..........',
+    '.....p....',
+    '....pyp...',
+    '.....p....',
+    '.....t....',
+    '..........',
+    '..........',
+    '..........'],
+  shroom: [
+    '...dddd...',
+    '..dRRwRd..',
+    '.dRwRRRwd.',
+    'dRRRRwRRRd',
+    'dRwRRRRRwd',
+    'dddddddddd',
+    '...dffd...',
+    '...dffd...',
+    '...dffd...',
+    '....dd....']
+};
+
+// ---------- предрендер спрайтов в офф-скрин канвасы ----------
+const IMG = {};
+for (const [name, rows] of Object.entries(SPR)) {
+  const cv = document.createElement('canvas'); cv.width = cv.height = 10;
+  const cx = cv.getContext('2d');
+  rows.forEach((row, y) => [...row].slice(0, 10).forEach((ch, x) => {
+    if (PAL[ch]) { cx.fillStyle = PAL[ch]; cx.fillRect(x, y, 1, 1); }
+  }));
+  IMG[name] = cv;
+}
+
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+ctx.imageSmoothingEnabled = false;
+
+function sprite(name, gx, gy, rot = 0) {
+  const x = gx * T, y = gy * T;
+  if (!rot) { ctx.drawImage(IMG[name], x, y, T, T); return; }
+  ctx.save();
+  ctx.translate(x + T / 2, y + T / 2);
+  ctx.rotate(rot);
+  ctx.drawImage(IMG[name], -T / 2, -T / 2, T, T);
+  ctx.restore();
+}
+
+// ---------- декор: фиксированный по сид-генератору ----------
+let seed = 7;
+const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+const decor = {};
+for (let y = FY0; y <= FY1; y++) for (let x = FX0; x <= FX1; x++) {
+  const r = rnd();
+  if (r < 0.035) decor[x + ',' + y] = 'flower';
+  else if (r < 0.06) decor[x + ',' + y] = 'flower2';
+}
+
+// ---------- звук (WebAudio, создаётся после первого нажатия) ----------
+let actx = null, muted = false;
+function beep(freq, dur, type = 'square', vol = 0.06, slide = 0) {
+  if (muted) return;
+  try {
+    actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.type = type; o.frequency.value = freq;
+    if (slide) o.frequency.linearRampToValueAtTime(freq + slide, actx.currentTime + dur);
+    g.gain.value = vol;
+    g.gain.linearRampToValueAtTime(0, actx.currentTime + dur);
+    o.connect(g); g.connect(actx.destination);
+    o.start(); o.stop(actx.currentTime + dur);
+  } catch (e) {}
+}
+
+// ---------- состояние ----------
+const DIRS = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
+const ROT = { right: 0, down: Math.PI / 2, left: Math.PI, up: -Math.PI / 2 };
+const MAX_SCORE = 9999;
+// pts — очки за яблоко (золотое = x5); limit — счёт, при котором уровень пройден
+const LEVELS = [
+  { name: 'УРОВЕНЬ 1', sub: 'САМЫЙ ПРОСТОЙ', start: 220, min: 170, dec: 2, pts: 10,  apples: 3, shrooms: 2, limit: 200 },
+  { name: 'УРОВЕНЬ 2', sub: 'ПОСЛОЖНЕЕ',     start: 150, min: 105, dec: 2, pts: 25,  apples: 2, shrooms: 0, limit: 1500 },
+  { name: 'УРОВЕНЬ 3', sub: 'ФИНАЛ',         start: 105, min: 60,  dec: 1, pts: 100, apples: 1, shrooms: 0, limit: MAX_SCORE }
+];
+const SHROOM_PTS = 20;
+
+let state = 'title';                        // title | intro | play | pause | levelup | win | over
+let snake, dir, dirQueue, items, score, best = 0, eaten, stepMs, acc = 0, last = 0;
+let level = 0, shake = 0, popups = [];
+const LV = () => LEVELS[level];
+try { best = +localStorage.getItem('snake8_best') || 0; } catch (e) {}
+
+function loadLevel() {
+  snake = [{ x: 8, y: 9 }, { x: 7, y: 9 }, { x: 6, y: 9 }];
+  dir = 'right'; dirQueue = []; eaten = 0; stepMs = LV().start; acc = 0; popups = []; items = [];
+  for (let i = 0; i < LV().apples; i++) placeItem(nextAppleKind());
+  for (let i = 0; i < LV().shrooms; i++) placeItem('shroom');
+}
+
+function newGame() { score = 0; level = 0; loadLevel(); state = 'intro'; }
+
+function nextAppleKind() { return eaten > 0 && eaten % 5 === 4 && !items.some(i => i.kind === 'gold') ? 'gold' : 'apple'; }
+
+function placeItem(kind) {
+  let x, y;
+  do {
+    x = FX0 + Math.floor(Math.random() * (FX1 - FX0 + 1));
+    y = FY0 + Math.floor(Math.random() * (FY1 - FY0 + 1));
+  } while (snake.some(s => s.x === x && s.y === y) || items.some(i => i.x === x && i.y === y));
+  items.push({ x, y, kind });
+}
+
+function step() {
+  if (dirQueue.length) dir = dirQueue.shift();
+  const [dx, dy] = DIRS[dir];
+  const nx = snake[0].x + dx, ny = snake[0].y + dy;
+  const hit = items.find(i => i.x === nx && i.y === ny);
+  const grow = !!hit && hit.kind !== 'shroom';
+  const body = grow ? snake : snake.slice(0, -1);
+  if (nx < FX0 || nx > FX1 || ny < FY0 || ny > FY1 || body.some(s => s.x === nx && s.y === ny)) {
+    die(); return;
+  }
+  snake.unshift({ x: nx, y: ny });
+  if (!grow) snake.pop();
+  if (!hit) return;
+
+  items.splice(items.indexOf(hit), 1);
+  let pts;
+  if (hit.kind === 'shroom') {
+    pts = SHROOM_PTS; placeItem('shroom'); beep(330, 0.15, 'triangle', 0.09, 200);
+  } else {
+    pts = hit.kind === 'gold' ? LV().pts * 5 : LV().pts;
+    eaten++; stepMs = Math.max(LV().min, stepMs - LV().dec);
+    placeItem(nextAppleKind());
+    beep(hit.kind === 'gold' ? 880 : 520, 0.12, 'square', 0.07, 300);
+  }
+  score = Math.min(MAX_SCORE, score + pts);
+  popups.push({ x: nx, y: ny, t: 0, text: '+' + pts });
+  if (score >= LV().limit) finishLevel();
+}
+
+function saveBest() {
+  if (score > best) { best = score; try { localStorage.setItem('snake8_best', best); } catch (e) {} }
+}
+
+function finishLevel() {
+  saveBest(); lockUntil = performance.now() + 900;
+  state = level === LEVELS.length - 1 ? 'win' : 'levelup';
+  [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => beep(f, 0.18, 'square', 0.07), i * 140));
+}
+
+function die() {
+  state = 'over'; shake = 18; saveBest(); lockUntil = performance.now() + 900;
+  beep(220, 0.5, 'sawtooth', 0.08, -180);
+}
+
+function turn(d) {
+  const prev = dirQueue.length ? dirQueue[dirQueue.length - 1] : dir;
+  const [px, py] = DIRS[prev], [nx, ny] = DIRS[d];
+  if (px + nx === 0 && py + ny === 0) return;   // нельзя развернуться на 180°
+  if (d === prev) return;
+  if (dirQueue.length < 2) dirQueue.push(d);
+}
+
+// ---------- ввод ----------
+const KEYMAP = {
+  ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right',
+  KeyW: 'up', KeyS: 'down', KeyA: 'left', KeyD: 'right'
+};
+window.addEventListener('keydown', e => {
+  if (KEYMAP[e.code] || e.code === 'Space' || e.code === 'Enter') e.preventDefault(); // не скроллим страницу
+  if (e.repeat && !KEYMAP[e.code]) return;
+  const d = KEYMAP[e.code];
+  if (d) {
+    if (state === 'play') turn(d); else advance(true);
+    return;
+  }
+  if (e.code === 'Space' || e.code === 'Enter') {
+    if (state === 'play') state = 'pause'; else advance(false);
+  } else if (e.code === 'KeyP') {
+    if (state === 'play') state = 'pause'; else if (state === 'pause') state = 'play';
+  } else if (e.code === 'KeyM') { muted = !muted; }
+});
+window.addEventListener('blur', () => { if (state === 'play') state = 'pause'; });
+// переход по экранам; arrow=true — нажата стрелка (пауза ей не снимается)
+let lockUntil = 0;                          // защита от случайного пролистывания финальных экранов
+function advance(arrow) {
+  if (performance.now() < lockUntil) return;
+  if (state === 'title' || state === 'over' || state === 'win') newGame();
+  else if (state === 'intro') { state = 'play'; beep(440, 0.1, 'square', 0.06, 200); }
+  else if (state === 'levelup') { level++; loadLevel(); state = 'intro'; }
+  else if (state === 'pause' && !arrow) state = 'play';
+}
+
+// ---------- отрисовка ----------
+function text(str, x, y, size, color, align = 'center') {
+  ctx.font = 'bold ' + size + 'px "Courier New", monospace';
+  ctx.textAlign = align; ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#000'; ctx.fillText(str, x + 3, y + 3);
+  ctx.fillStyle = color; ctx.fillText(str, x, y);
+}
+
+function drawField() {
+  ctx.fillStyle = '#0b1a0e'; ctx.fillRect(0, 0, 840, 540);
+  for (let y = 1; y < ROWS; y++) for (let x = 0; x < COLS; x++) {
+    const wall = x === 0 || x === COLS - 1 || y === 1 || y === ROWS - 1;
+    if (wall) { sprite('brick', x, y); continue; }
+    sprite((x + y) % 2 ? 'grassA' : 'grassB', x, y);
+    const dc = decor[x + ',' + y];
+    if (dc) sprite(dc, x, y);
+  }
+}
+
+function drawHud() {
+  ctx.fillStyle = '#0e3b1a'; ctx.fillRect(0, 0, 840, T);
+  text('УР.' + (level + 1), 20, 16, 20, '#fff', 'left');
+  text('СЧЁТ ' + String(score).padStart(4, '0') + '/' + String(LV().limit).padStart(4, '0'), 120, 16, 20, '#8bd450', 'left');
+  text('РЕКОРД ' + String(best).padStart(4, '0'), 820, 16, 20, '#f2c230', 'right');
+}
+
+function drawSnake() {
+  for (let i = snake.length - 1; i >= 1; i--) sprite(i % 2 ? 'body' : 'body2', snake[i].x, snake[i].y);
+  const h = snake[0];
+  sprite('head', h.x, h.y, ROT[dir]);
+}
+
+function draw(now) {
+  ctx.save();
+  if (shake > 0) { ctx.translate((Math.random() - .5) * shake, (Math.random() - .5) * shake); shake -= 1; }
+  drawField();
+  if (snake) {
+    const bob = Math.sin(now / 150) * 2;
+    ctx.save(); ctx.translate(0, bob);
+    items.forEach(it => sprite(it.kind === 'gold' ? 'gold' : it.kind === 'shroom' ? 'shroom' : 'apple', it.x, it.y));
+    ctx.restore();
+    drawSnake();
+    popups.forEach(p => { p.t++; text(p.text, p.x * T + 15, p.y * T - p.t * 0.8, 16, '#fff'); });
+    popups = popups.filter(p => p.t < 30);
+  }
+  drawHud();
+  ctx.restore();
+
+  if (state === 'title') {
+    overlay();
+    text('ЗМЕЙКА', 420, 190, 64, '#8bd450');
+    text('8-BIT EDITION', 420, 245, 22, '#f2c230');
+    if (Math.floor(now / 500) % 2) text('НАЖМИ ПРОБЕЛ ИЛИ СТРЕЛКУ', 420, 340, 22, '#fff');
+    text('СТРЕЛКИ / WASD — ПОВОРОТ', 420, 400, 16, '#9a9aa8');
+    text('ПРОБЕЛ — ПАУЗА   M — ЗВУК', 420, 425, 16, '#9a9aa8');
+    text('3 УРОВНЯ. ЕШЬ ЯБЛОКИ, НЕ ВРЕЖЬСЯ В СТЕНЫ И В СЕБЯ', 420, 460, 14, '#9a9aa8');
+    sprite('apple', 6, 5); sprite('head', 21, 5); sprite('body', 20, 5); sprite('body2', 19, 5);
+  } else if (state === 'intro') {
+    overlay();
+    text(LV().name, 420, 200, 56, '#8bd450');
+    text(LV().sub, 420, 260, 26, '#f2c230');
+    text('ЦЕЛЬ: НАБРАТЬ ' + LV().limit + ' ОЧКОВ', 420, 320, 20, '#fff');
+    text('ЯБЛОКО +' + LV().pts + '   ЗОЛОТОЕ +' + LV().pts * 5 + (LV().shrooms ? '   ГРИБ +' + SHROOM_PTS : ''), 420, 355, 16, '#9a9aa8');
+    if (LV().shrooms) text('ГРИБЫ ОЧКИ ДАЮТ, НО ЗМЕЯ ОТ НИХ НЕ РАСТЁТ', 420, 380, 14, '#9a9aa8');
+    if (Math.floor(now / 500) % 2) text('ПРОБЕЛ — НАЧАТЬ', 420, 440, 22, '#fff');
+  } else if (state === 'pause') {
+    overlay(); text('ПАУЗА', 420, 290, 52, '#f2c230');
+  } else if (state === 'levelup') {
+    overlay();
+    text(LV().name + ' ПРОЙДЕН!', 420, 220, 44, '#8bd450');
+    text('СЧЁТ ' + score, 420, 290, 28, '#fff');
+    text('ДАЛЬШЕ БУДЕТ БЫСТРЕЕ', 420, 335, 18, '#f2c230');
+    if (Math.floor(now / 500) % 2) text('ПРОБЕЛ — ' + LEVELS[level + 1].name, 420, 400, 22, '#fff');
+  } else if (state === 'win') {
+    overlay();
+    text('ПОБЕДА!', 420, 200, 60, '#f2c230');
+    text('ВСЕ 3 УРОВНЯ ПРОЙДЕНЫ', 420, 265, 22, '#8bd450');
+    text('СЧЁТ ' + score + (score >= MAX_SCORE ? ' — МАКСИМУМ!' : ''), 420, 320, 28, '#fff');
+    if (Math.floor(now / 500) % 2) text('ПРОБЕЛ — ИГРАТЬ СНОВА', 420, 400, 22, '#fff');
+  } else if (state === 'over') {
+    overlay();
+    text('GAME OVER', 420, 210, 56, '#ff3b5c');
+    text(LV().name + ' · СЧЁТ ' + score, 420, 280, 26, '#fff');
+    if (score && score === best) text('НОВЫЙ РЕКОРД!', 420, 320, 20, '#f2c230');
+    if (Math.floor(now / 500) % 2) text('ПРОБЕЛ — НАЧАТЬ СНАЧАЛА', 420, 390, 22, '#8bd450');
+  }
+}
+function overlay() { ctx.fillStyle = 'rgba(5,10,6,.72)'; ctx.fillRect(0, T, 840, 510); }
+
+// ---------- цикл ----------
+function loop(now) {
+  const dt = Math.min(now - (last || now), 100); last = now;
+  if (state === 'play') {
+    acc += dt;
+    while (acc >= stepMs && state === 'play') { acc -= stepMs; step(); }
+  }
+  draw(now);
+  requestAnimationFrame(loop);
+}
+score = 0; loadLevel();
+requestAnimationFrame(loop);
+
+// ---------- масштаб под окно браузера ----------
+const tv = document.getElementById('tv');
+function fit() {
+  const s = Math.min(1, innerWidth / 920, innerHeight / 620);
+  tv.style.transform = 'scale(' + s + ')';
+}
+addEventListener('resize', fit); fit();
+
+// для отладки/тестов
+window.__snake = { get state() { return state; }, get score() { return score; }, get snake() { return snake; }, get dir() { return dir; }, get items() { return items; }, get level() { return level; }, get stepMs() { return stepMs; },
+  set score(v) { score = v; }, step, LEVELS };
+})();
+</script>
+</body>
+</html>
